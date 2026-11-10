@@ -83,104 +83,6 @@ In any OAuth-based integration, the important credentials are:
 
 The model receives none of these credentials.
 
-## Example: a local GitHub issue manager
-
-### Scenario
-
-We are building a small local web application that helps a user manage a GitHub issue backlog. The user connects a GitHub account, asks the agent to find stale issues, and may later ask it to draft or create an issue comment.
-
-The application uses:
-
-- an agent running inside the local application;
-- GitHub's remote MCP server exposing the configured capabilities;
-- an OAuth relationship between the MCP host and the protected MCP resource;
-- explicit approval before write actions.
-
-The local application is the MCP host and agent runtime. GitHub's remote MCP server is a separate trust boundary. The host obtains whatever access token the remote-server configuration requires and presents it to the MCP server. The local application must not assume that it owns or can inspect the downstream GitHub credential.
-
-### The permission rule
-
-The remote MCP flow has several separate permission boundaries:
-
-1. The user authorizes the MCP host or its configured OAuth application.
-2. The remote MCP server authenticates the host and exposes a configured set of tools.
-3. The downstream GitHub credential determines which repositories and operations GitHub will allow.
-4. The application may apply its own policy and approval before invoking a write-capable tool.
-
-For a first prototype, use the remote server's read-only configuration and expose only the context, repository, and issue capabilities needed by the exercise. Add write capability only for a defined action, such as creating an issue comment.
-
-The exact downstream token format and storage location depend on the MCP host and OAuth configuration. Treat the credential as provider-managed and do not parse claims unless the provider documents that contract.
-
-## Part 1: authorize the remote MCP server
-
-The user sees the connection prompt before the browser leaves the application. The application explains the remote server, requested capabilities, data accessed, storage, and how to disconnect it. The host should follow the authorization metadata returned by the remote server rather than hard-code provider endpoints.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor U as User
-    participant B as Browser
-    participant A as Local app
-    participant M as Remote GitHub MCP server
-    participant G as OAuth authorization server
-
-    U->>B: Select "Connect GitHub"
-    B->>A: Request GitHub connection
-    A-->>B: Show permission and data-use prompt
-    B-->>U: Popup: "Connect GitHub?"
-    Note over B,U: Show app name, repository permissions,<br/>data accessed, storage, and disconnect option.
-    U->>B: Accept and continue
-    A->>M: Initialize MCP connection without a token
-    M-->>A: 401 with protected-resource metadata
-    A->>B: Open discovered authorization URL
-    B->>G: OAuth authorization request
-    Note over B,G: authorization code + state + PKCE<br/>client configuration comes from the MCP host
-    G-->>B: Authorization code
-    B->>A: OAuth callback with code and state
-    A->>G: Exchange code for MCP access token
-    G-->>A: Provider-issued access token
-    A->>M: Initialize MCP connection with access token
-    M-->>A: Authenticated session and negotiated tools
-```
-
-The MCP host owns the OAuth client flow. The remote MCP server validates the token presented by the host. The host must document which identity the token represents, how it is stored, how it is revoked, and which downstream GitHub permissions it carries.
-
-## Part 2: handle an agent request
-
-The agent runs inside the local application and calls GitHub's remote MCP server. The remote server applies its own authentication and tool policy before making downstream GitHub requests.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor U as User
-    participant A as Local app and agent
-    participant M as Remote GitHub MCP server
-    participant R as GitHub REST API
-
-    U->>A: "Show stale issues in my backlog"
-    A->>A: Resolve the authenticated user and linked GitHub account
-    A->>M: Agent invokes GitHub MCP tool
-    Note over A,M: The agent sends intent and tool parameters.<br/>It never receives or selects a token.
-    M->>R: GitHub API request using the provider credential
-    Note over M,R: GitHub applies the permissions associated with the credential.<br/>The MCP host does not infer those permissions from model output.
-    R-->>M: Issues permitted for this user and app
-    M-->>A: Structured issue data
-    A-->>U: Agent summary
-```
-
-The MCP server exposes the tools in its negotiated inventory. The application should allow only the tools needed for the task and should not let the model choose credentials or bypass the remote server's authorization.
-
-## What each credential means
-
-| Credential | Purpose | Where it is used |
-| --- | --- | --- |
-| Authorization code | Proves that the user completed authorization with the configured OAuth provider | Server-side exchange only |
-| MCP access token | Lets the MCP host authenticate to the protected remote MCP resource | MCP client-to-server requests |
-| Downstream credential, if separately managed | Lets the remote service call its downstream resource | Remote MCP service boundary |
-| Refresh token, if issued | Obtains a new access token | OAuth client or host token storage |
-
-The agent receives structured issue data or a narrowly scoped MCP result. It receives none of these credentials.
-
 ## Common mistakes
 
 - **Give the agent a personal access token or broad service credential.** One leaked or misused credential can expose every repository that it can reach, across many users.
@@ -188,29 +90,23 @@ The agent receives structured issue data or a narrowly scoped MCP result. It rec
 - **Let the model choose the token or repository.** The MCP host and server must derive access from the authenticated session and their permission checks.
 - **Request write access before the prototype needs it.** Early write permissions expand the blast radius before the read path and approval experience have been tested.
 
-## Practice plan
+## Practice assignment
 
-The practice has two sequences. The first proves which GitHub user the application is acting for. The second adds issue access and a controlled write.
+Using the official documentation and a vibe-coding tool, build a minimal LangGraph agent with GitHub's hosted remote MCP server.
 
-The exercise uses GitHub's hosted remote MCP server and its documented OAuth flow. Students do not deploy the MCP server or register their own GitHub App. The earlier delegation model explains the authority boundary; the remote server supplies the concrete exercise path.
+### Sequence 1: identify the user
 
-### Sequence 1: identify the current user
+Use OAuth and expose only `get_me`. Explain the browser flow, token handling, and which GitHub user the application is acting for.
 
-Configure the local application as an MCP host for GitHub's remote server. Use its OAuth flow, keep the server read-only, and expose the context capability needed for identity. Build the smallest agent possible: invoke `get_me` and display the authenticated GitHub user's profile. The current server defines `get_me` with no parameters. Check the negotiated tool inventory because toolset placement can vary by server version.
+Read: [GitHub remote MCP server](https://github.com/github/github-mcp-server#remote-github-mcp-server), [host integration](https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md), [MCP authorization](https://modelcontextprotocol.io/specification/latest/basic/authorization), and [creating a GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app).
 
-**Documentation:** [Remote GitHub MCP Server](https://github.com/github/github-mcp-server#remote-github-mcp-server), [remote server configuration](https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md), [host integration and authentication](https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md), [MCP authorization](https://modelcontextprotocol.io/specification/latest/basic/authorization), [GitHub MCP tools](https://github.com/github/github-mcp-server#tools), [`get_me` implementation](https://github.com/github/github-mcp-server/blob/main/pkg/github/context_tools.go).
+### Sequence 2: access issues
 
-Test the boundary with a second account and a revoked authorization. The application must never display one user's profile for another user's session.
+Add read-only issue access. Test an inaccessible repository, then optionally add one approved issue comment and identify which component enforces each boundary.
 
-### Sequence 2: manage repository issues
+Read: [GitHub MCP toolsets](https://github.com/github/github-mcp-server#available-toolsets), [server configuration](https://github.com/github/github-mcp-server/blob/main/docs/server-configuration.md), and [GitHub issue permissions](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps).
 
-Enable the remote server's `repos` and `issues` toolsets with read-only access. Ask the agent to list issues for a repository the authenticated user can access. Then test a repository the user cannot access and record which layer rejects the request.
-
-Next, add one controlled write. Let the agent draft an issue comment, show the repository, issue, content, identity, and permission intersection, and require approval immediately before submission. Enable only the smallest write capability required. Test an expired or revoked authorization and an attempted request for another user's repository.
-
-**Documentation:** [GitHub MCP toolsets](https://github.com/github/github-mcp-server#available-toolsets), [server configuration](https://github.com/github/github-mcp-server/blob/main/docs/server-configuration.md), [GitHub issue permissions](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps), [GitHub user-token permissions](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app).
-
-Record only what the exercise needs: GitHub user identifier, authorization state, MCP calls, issue content, approval, and deletion path. Decide which fields must stay out of model context and ordinary traces.
+Deliverable: a short trace of the flow, permissions, token handling, and one failed boundary test. Never give the model a token or commit client secrets.
 
 ## Optional enterprise extension: Entra ID and OBO
 
@@ -228,3 +124,5 @@ That token exchange does not produce a GitHub token. GitHub remains a separate a
 6. [MCP authorization](https://modelcontextprotocol.io/specification/latest/basic/authorization). **Protocol specification.** Defines the authorization flow for protected MCP resources and the separation between MCP client and server.
 7. GitHub. [Remote MCP host integration](https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md). **Platform guidance.** Describes the remote server as a protected resource and places token acquisition in the host application.
 8. Microsoft. [Microsoft identity platform and OAuth 2.0 On-Behalf-Of flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow). **Optional enterprise extension.** Defines Entra OBO for downstream APIs that trust Microsoft Entra; it does not produce a GitHub token.
+9. GitHub. [Creating an OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app). **Platform documentation.** Describes registration, client credentials, homepage URL, and authorization callback URL.
+10. GitHub. [Authorizing OAuth Apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps). **Platform documentation.** Describes the authorization-code flow, state, PKCE, callback, and access-token exchange.

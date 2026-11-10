@@ -1,0 +1,4 @@
+langchain[mcp]==1.4.8
+langchain-openai==1.7.3
+pydantic==2.14.3
+python-dotenv==1.2.4
